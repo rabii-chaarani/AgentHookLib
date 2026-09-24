@@ -92,6 +92,9 @@ fn compound_operators_preserve_every_operation_in_source_order() {
     assert_eq!(parsed.operations()[2].invocation().executable(), "git");
     assert_eq!(parsed.operations()[3].invocation().executable(), "git");
     assert_eq!(parsed.operations()[4].invocation().executable(), "command");
+
+    let multiline = parse("first &&\nsecond |\nthird ||\nfourth");
+    assert_eq!(multiline.operations().len(), 4);
 }
 
 #[test]
@@ -115,6 +118,16 @@ fn recognizes_only_exact_supported_git_executables_and_subcommands() {
     for (source, expected) in cases {
         assert_eq!(parse(source).operations()[0].action(), expected, "{source}");
     }
+
+    let exe_action = if cfg!(windows) {
+        Action::Git(GitAction::Push)
+    } else {
+        Action::Command(CommandAction::Execute)
+    };
+    assert_eq!(
+        parse("GIT.EXE push origin main").operations()[0].action(),
+        exe_action
+    );
 }
 
 #[test]
@@ -122,7 +135,9 @@ fn rejects_force_push_and_hard_reset_until_change_six() {
     for source in [
         "git push --force origin main",
         "git push origin main -f",
+        "git push origin +HEAD:main",
         "git reset --hard HEAD",
+        "git reset --har HEAD",
     ] {
         let error = parse_command_line(source, &context()).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::UnsupportedOperation, "{source}");
@@ -136,8 +151,6 @@ fn rejects_unsupported_syntax_and_returns_no_partial_operations() {
         ("echo $(touch marker)", ErrorKind::UnsupportedSyntax),
         ("echo $HOME", ErrorKind::UnsupportedSyntax),
         ("echo `date`", ErrorKind::UnsupportedSyntax),
-        (r#"echo "%PATH%""#, ErrorKind::UnsupportedSyntax),
-        (r#"echo '!PATH!'"#, ErrorKind::UnsupportedSyntax),
         ("echo %1", ErrorKind::UnsupportedSyntax),
         ("echo > output", ErrorKind::UnsupportedSyntax),
         ("echo *.rs", ErrorKind::UnsupportedSyntax),
@@ -206,10 +219,16 @@ fn parsing_substitution_text_never_creates_a_side_effect() {
 
 #[test]
 fn accepts_expansion_characters_as_single_quoted_literal_text() {
-    let parsed = parse("echo '$(touch marker) $HOME *.rs'");
+    let parsed = parse("echo '$(touch marker) $HOME *.rs %PATH% !important! ^'");
     assert_eq!(parsed.operations().len(), 1);
     assert_eq!(
         parsed.operations()[0].invocation().arguments(),
-        args(&["$(touch marker) $HOME *.rs"])
+        args(&["$(touch marker) $HOME *.rs %PATH% !important! ^"])
+    );
+
+    let double_quoted = parse("echo \"%PATH% !important! ^\"");
+    assert_eq!(
+        double_quoted.operations()[0].invocation().arguments(),
+        args(&["%PATH% !important! ^"])
     );
 }

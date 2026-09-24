@@ -225,14 +225,6 @@ fn lex(source: &str) -> Result<Vec<Token>, CommandParseError> {
                 Quote::Single => {
                     if ch == '\'' {
                         quote = None;
-                    } else if (ch == '%' && has_cmd_variable_expansion(source, offset, Some('\'')))
-                        || (ch == '!' && has_delimited_expansion(source, offset, '!', Some('\'')))
-                        || ch == '^'
-                    {
-                        return Err(CommandParseError::new(
-                            CommandParseErrorKind::UnsupportedSyntax,
-                            offset,
-                        ));
                     } else {
                         value.push(ch);
                     }
@@ -240,24 +232,6 @@ fn lex(source: &str) -> Result<Vec<Token>, CommandParseError> {
                 Quote::Double => match ch {
                     '"' => quote = None,
                     '$' | '`' => {
-                        return Err(CommandParseError::new(
-                            CommandParseErrorKind::UnsupportedSyntax,
-                            offset,
-                        ));
-                    }
-                    '%' if has_cmd_variable_expansion(source, offset, Some('"')) => {
-                        return Err(CommandParseError::new(
-                            CommandParseErrorKind::UnsupportedSyntax,
-                            offset,
-                        ));
-                    }
-                    '!' if has_delimited_expansion(source, offset, '!', Some('"')) => {
-                        return Err(CommandParseError::new(
-                            CommandParseErrorKind::UnsupportedSyntax,
-                            offset,
-                        ));
-                    }
-                    '^' => {
                         return Err(CommandParseError::new(
                             CommandParseErrorKind::UnsupportedSyntax,
                             offset,
@@ -328,7 +302,7 @@ fn lex(source: &str) -> Result<Vec<Token>, CommandParseError> {
                     && !matches!(
                         tokens.last(),
                         Some(Token {
-                            kind: TokenKind::Separator(Separator::Sequence),
+                            kind: TokenKind::Separator(_),
                             ..
                         })
                     )
@@ -436,7 +410,7 @@ fn lex(source: &str) -> Result<Vec<Token>, CommandParseError> {
                     offset,
                 ));
             }
-            '%' if has_cmd_variable_expansion(source, offset, None) => {
+            '%' if has_cmd_variable_expansion(source, offset) => {
                 return Err(CommandParseError::new(
                     CommandParseErrorKind::UnsupportedSyntax,
                     offset,
@@ -489,7 +463,7 @@ fn flush_word(
     *token_quoted = false;
 }
 
-fn has_cmd_variable_expansion(source: &str, offset: usize, quote: Option<char>) -> bool {
+fn has_cmd_variable_expansion(source: &str, offset: usize) -> bool {
     let Some(rest) = source.get(offset + 1..) else {
         return false;
     };
@@ -497,30 +471,8 @@ fn has_cmd_variable_expansion(source: &str, offset: usize, quote: Option<char>) 
         return true;
     }
     rest.chars()
-        .take_while(|ch| {
-            !ch.is_whitespace()
-                && Some(*ch) != quote
-                && (quote.is_some() || !matches!(ch, ';' | '&' | '|'))
-        })
+        .take_while(|ch| !ch.is_whitespace() && !matches!(ch, ';' | '&' | '|'))
         .any(|ch| ch == '%')
-}
-
-fn has_delimited_expansion(
-    source: &str,
-    offset: usize,
-    delimiter: char,
-    quote: Option<char>,
-) -> bool {
-    let Some(rest) = source.get(offset + delimiter.len_utf8()..) else {
-        return false;
-    };
-    rest.chars()
-        .take_while(|ch| {
-            !ch.is_whitespace()
-                && Some(*ch) != quote
-                && (quote.is_some() || !matches!(ch, ';' | '&' | '|'))
-        })
-        .any(|ch| ch == delimiter)
 }
 
 fn parse_segment(tokens: &[Token]) -> Result<ParsedOperation, CommandParseError> {
@@ -657,9 +609,10 @@ fn classify(tokens: &[Token], executable_index: usize) -> Result<Action, Command
         "commit" => GitAction::Commit,
         "checkout" => GitAction::Checkout,
         "reset" => {
-            if let Some(flag) = args.iter().find(|argument| {
-                argument.value == "--hard" || argument.value.starts_with("--hard=")
-            }) {
+            if let Some(flag) = args
+                .iter()
+                .find(|argument| is_hard_reset_option(&argument.value))
+            {
                 return Err(CommandParseError::new(
                     CommandParseErrorKind::UnsupportedOperation,
                     flag.start,
@@ -670,6 +623,7 @@ fn classify(tokens: &[Token], executable_index: usize) -> Result<Action, Command
         "push" => {
             if let Some(flag) = args.iter().find(|argument| {
                 argument.value.starts_with("--force")
+                    || argument.value.starts_with('+')
                     || (argument.value.starts_with('-')
                         && !argument.value.starts_with("--")
                         && argument.value[1..].contains('f'))
@@ -695,13 +649,30 @@ fn executable_name(executable: &str) -> &str {
 
 fn name_matches(actual: &str, expected: &str) -> bool {
     if cfg!(windows) {
-        actual
-            .strip_suffix(".exe")
-            .unwrap_or(actual)
-            .eq_ignore_ascii_case(expected)
+        windows_executable_stem(actual).eq_ignore_ascii_case(expected)
     } else {
         actual == expected
     }
+}
+
+fn windows_executable_stem(actual: &str) -> &str {
+    actual
+        .len()
+        .checked_sub(4)
+        .filter(|&start| {
+            actual
+                .get(start..)
+                .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".exe"))
+        })
+        .map(|start| &actual[..start])
+        .unwrap_or(actual)
+}
+
+fn is_hard_reset_option(argument: &str) -> bool {
+    let option = argument
+        .split_once('=')
+        .map_or(argument, |(option, _)| option);
+    option == "--hard" || (option.len() > 2 && "--hard".starts_with(option))
 }
 
 fn is_shell_interpreter(name: &str) -> bool {
@@ -737,4 +708,17 @@ fn is_stateful_builtin(name: &str) -> bool {
     ]
     .iter()
     .any(|candidate| name_matches(name, candidate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_executable_stem;
+
+    #[test]
+    fn windows_exe_suffix_is_case_insensitive() {
+        assert_eq!(windows_executable_stem("GIT.EXE"), "GIT");
+        assert_eq!(windows_executable_stem("git.ExE"), "git");
+        assert_eq!(windows_executable_stem("git"), "git");
+        assert_eq!(windows_executable_stem("git.exe.old"), "git.exe.old");
+    }
 }
