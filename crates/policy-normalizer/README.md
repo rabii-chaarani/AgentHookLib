@@ -63,6 +63,32 @@ resource identity and future selector-literal comparison. Apply the semantics
 of each name's parent; do not assume one case flag for an entire repository.
 Glob interpretation and policy matching remain downstream responsibilities.
 
+## Command parsing
+
+`policy_normalizer::commands::parse_command_line` parses a bounded POSIX-like
+command form without starting a shell or executing a command. It accepts quoted
+words and the `;`, `&&`, `||`, and `|` separators. Separators produce an ordered
+list of operations; callers must evaluate every operation before allowing the
+original command. The parser does not authorize commands.
+
+The simple `env`, `command`, `exec`, and `time` wrappers are recognized and
+retained in each operation's executable and argument vector. Wrapper options,
+environment assignments, nested shells, and known wrappers such as `sudo`,
+`nice`, and `nohup` are unsupported. Other unrecognized executables remain
+generic command operations and are never unwrapped. State-changing shell
+built-ins such as `cd`, `export`, and `source` are unsupported, since they can
+change how later operations in a compound run.
+Exact `git commit`, `git checkout`, `git reset`, and `git push` subcommands map
+to their semantic Git actions. Other valid commands remain generic command
+operations. Force-push and hard-reset forms return an unsupported-operation
+error until their dedicated classifications are implemented.
+
+Variable, command, arithmetic, and process substitutions; unquoted globbing;
+redirection; background execution; shell control structures; and malformed
+quoting are rejected with a typed error and byte offset. Errors never include
+the supplied command text. A failed parse returns no partial operation list.
+PowerShell and `cmd.exe` syntax is outside this grammar.
+
 Windows accepts absolute drive, UNC, and supported extended-length forms.
 Root-relative inputs use the explicit cwd's drive; drive-relative inputs,
 device namespaces, alternate streams, and ambiguous legacy names are rejected.
