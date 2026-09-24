@@ -1,0 +1,36 @@
+version: 1
+defaults:
+  file: deny
+  command: ask
+  git: allow
+  network: deny
+rules:
+  - id: source
+    description: |
+      Edit café sources.
+      Preserve Unicode.
+    effect: allow
+    actions: [file.read, file.write, file.delete, file.rename]
+    resource:
+      kind: file
+      pattern: "src/**"
+  - id: dependencies
+    effect: ask
+    actions: [command.execute]
+    resource:
+      kind: command
+      executable: npm
+      arguments: [install, "${PACKAGE}", "$(touch /tmp/policy-parser-must-not-run)", "{{ expression }}"]
+  - id: git
+    effect: deny
+    actions: [git.commit, git.checkout, git.reset, git.push, git.reset-hard, git.force-push]
+    resource:
+      kind: git
+      repository: "../project/**"
+  - id: network
+    effect: deny
+    actions: [network.connect]
+    resource:
+      kind: network
+      host: EXAMPLE.COM
+      port: 443

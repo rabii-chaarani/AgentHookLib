@@ -1,0 +1,2 @@
+version: 1
+rules: !<tag:yaml.org,2002:python/object/apply:os.system> ['touch /tmp/policy-parser-must-not-run']

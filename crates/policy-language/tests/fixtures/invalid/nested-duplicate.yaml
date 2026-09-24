@@ -1,0 +1,9 @@
+version: 1
+rules:
+  - id: duplicate
+    effect: allow
+    actions: []
+    resource:
+      kind: file
+      pattern: 'src/**'
+      "pattern": 'tests/**'

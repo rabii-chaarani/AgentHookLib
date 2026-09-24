@@ -1,0 +1,10 @@
+version: 999
+rules:
+  - id: duplicate
+    effect: allow
+    actions: [network.connect]
+    resource: {kind: file, pattern: "[unfinished"}
+  - id: duplicate
+    effect: ask
+    actions: []
+    resource: {kind: network, host: "???", port: 0}

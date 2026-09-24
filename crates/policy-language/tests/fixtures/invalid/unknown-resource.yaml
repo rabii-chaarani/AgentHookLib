@@ -1,0 +1,6 @@
+version: 1
+rules:
+  - id: unknown
+    effect: allow
+    actions: []
+    resource: {kind: database}

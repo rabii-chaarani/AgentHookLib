@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/policy-core"]
+members = ["crates/policy-core", "crates/policy-language"]
 resolver = "3"
 
 [workspace.package]
