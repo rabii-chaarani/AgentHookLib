@@ -218,7 +218,8 @@ fn create_junction(link: &Path, target: &Path) {
         assert!(
             text.chars()
                 .all(|c| c.is_ascii_alphanumeric()
-                    || matches!(c, ' ' | '\\' | ':' | '.' | '-' | '_'))
+                    || matches!(c, ' ' | '\\' | ':' | '.' | '-' | '_' | '~')),
+            "unexpected shell character in generated fixture path: {text:?}"
         );
         text.to_owned()
     };
