@@ -8,6 +8,7 @@ use policy_normalizer::paths::{
 use std::{
     ffi::{OsStr, OsString},
     fs,
+    os::windows::process::CommandExt,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -210,9 +211,25 @@ fn root_relative_path(path: &Path) -> PathBuf {
 }
 
 fn create_junction(link: &Path, target: &Path) {
-    let command = format!("mklink /J \"{}\" \"{}\"", link.display(), target.display());
+    // cmd.exe does not use the C runtime's quoting rules. These are generated
+    // fixture paths only; reject shell metacharacters before using raw_arg.
+    let fixture_path = |path: &Path| {
+        let text = path.to_str().expect("fixture path must be Unicode");
+        assert!(
+            text.chars()
+                .all(|c| c.is_ascii_alphanumeric()
+                    || matches!(c, ' ' | '\\' | ':' | '.' | '-' | '_'))
+        );
+        text.to_owned()
+    };
+    let command = format!(
+        "\"mklink /J \"{}\" \"{}\"\"",
+        fixture_path(link),
+        fixture_path(target)
+    );
     let output = Command::new("cmd.exe")
-        .args(["/D", "/S", "/C", &command])
+        .args(["/D", "/S", "/C"])
+        .raw_arg(command)
         .output()
         .expect("start cmd.exe to create a temporary junction");
     assert!(

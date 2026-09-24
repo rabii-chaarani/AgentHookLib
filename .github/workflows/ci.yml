@@ -29,7 +29,7 @@ jobs:
       - name: Documentation tests
         run: cargo test --workspace --doc --locked --offline
       - name: Native tests
-        run: cargo nextest run --workspace --profile ci --locked --offline
+        run: cargo nextest run --workspace --profile ci --locked --offline --no-fail-fast
       - name: Verify dependency metadata
         run: cargo metadata --format-version 1 --locked --offline
       - uses: actions/upload-artifact@v4
