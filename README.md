@@ -3,7 +3,9 @@
 Portable policy enforcement contracts for coding agents. The Rust workspace
 contains `policy-core`, a dependency-free library for authorization contracts and
 the `PolicyService` interface, and `policy-language`, a strict YAML parser and
-semantic validator with typed, source-located policy representations.
+semantic validator with typed, source-located policy representations. The
+`policy-normalizer` library resolves file identities from explicit operation
+context using read-only filesystem metadata on macOS, Linux, and Windows.
 
 Request constructors validate structure, including action/resource compatibility
 and rename destinations. They preserve supplied values and perform no I/O or
@@ -30,6 +32,16 @@ globs, literal executable/argv values, and exact DNS/IP destinations with option
 nonzero ports. Validation does not normalize filesystem paths, match resources,
 or authorize operations. See the [policy syntax and API guide](crates/policy-language/README.md)
 for executable examples, selector boundaries, and diagnostics.
+
+`policy_normalizer::paths::normalize_path` returns a canonical native path,
+repository-relative identity when inside the root, and per-component naming
+semantics. It resolves symlinks before parent traversal and permits a missing
+leaf only beneath an existing parent. Unknown filesystem or Unicode naming
+rules fail closed. `normalize_file_resource` normalizes both rename endpoints.
+These are snapshots, not authorization or execution-time race protection; final
+symlinks identify referents rather than unlink/rename entries. See the
+[normalization contract](crates/policy-normalizer/README.md) for platform support,
+errors, and safe downstream usage.
 
 Development uses the pinned Rust 1.98.1 toolchain and cargo-nextest (verified with
 0.9.140). `policy-core` remains dependency-free; `policy-language` uses
