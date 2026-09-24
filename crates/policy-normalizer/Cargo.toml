@@ -1,0 +1,23 @@
+[package]
+name = "policy-normalizer"
+description = "Read-only filesystem identities for agent policy requests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+policy-core = { path = "../policy-core" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_SystemServices", "Win32_System_WindowsProgramming", "Win32_Security"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
