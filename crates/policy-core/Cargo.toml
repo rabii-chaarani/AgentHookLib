@@ -1,0 +1,10 @@
+[package]
+name = "policy-core"
+description = "Agent-neutral authorization contracts for AgentHookLib"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
