@@ -2,15 +2,15 @@
 
 Portable policy enforcement contracts for coding agents. The Rust workspace
 contains `policy-core`, a dependency-free library for authorization contracts and
-the `PolicyService` interface, and `policy-language`, a strict YAML parser with a
-typed, source-located policy AST.
+the `PolicyService` interface, and `policy-language`, a strict YAML parser and
+semantic validator with typed, source-located policy representations.
 
 Request constructors validate structure, including action/resource compatibility
 and rename destinations. They preserve supplied values and perform no I/O or
 normalization. A valid request is not permission to execute. The future policy
 service evaluates permission; the coding-agent runtime owns execution and its
-sandbox. Semantic policy validation, evaluation, auditing, adapters, and the executable CLI remain
-planned work in Scryer.
+sandbox. Evaluation, auditing, adapters, and the executable CLI remain planned
+work in Scryer.
 
 The public API is re-exported by `policy_core`. Aggregates have fallible
 constructors and read-only accessors. `PolicyService::authorize` returns
@@ -23,8 +23,13 @@ constructing authorization errors; these types do not perform log redaction.
 per-resource defaults, preserving `allow`, `deny`, and `ask`. It rejects malformed
 YAML, unknown fields/names, duplicate mapping keys, tags, anchors, aliases, and
 merge keys. Parsing performs no I/O or execution and does not establish semantic
-validity or permission. See the [policy syntax and API guide](crates/policy-language/README.md)
-for selectors, diagnostics, limits, and the boundary with change 03.
+validity or permission. `validate_policy(parsed)` separately checks version 1,
+rule IDs, action/resource compatibility, and selector grammar, returning an
+immutable `ValidatedPolicy`. Its selectors support repository-relative path
+globs, literal executable/argv values, and exact DNS/IP destinations with optional
+nonzero ports. Validation does not normalize filesystem paths, match resources,
+or authorize operations. See the [policy syntax and API guide](crates/policy-language/README.md)
+for executable examples, selector boundaries, and diagnostics.
 
 Development uses the pinned Rust 1.98.1 toolchain and cargo-nextest (verified with
 0.9.140). `policy-core` remains dependency-free; `policy-language` uses

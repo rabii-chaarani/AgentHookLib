@@ -1,0 +1,33 @@
+version: 1
+defaults:
+  file: deny
+  command: ask
+  git: allow
+rules:
+  - id: sources
+    description: "Edit café sources.\nKeep Unicode."
+    effect: allow
+    actions: [file.write, file.write]
+    resource:
+      kind: file
+      pattern: "Src/**/?.rs"
+  - id: dependencies
+    effect: ask
+    actions: [command.execute]
+    resource:
+      kind: command
+      executable: npm
+      arguments: [install, "${PACKAGE}", ""]
+  - id: repository
+    effect: deny
+    actions: [git.reset-hard, git.force-push]
+    resource:
+      kind: git
+      repository: "."
+  - id: network
+    effect: ask
+    actions: [network.connect]
+    resource:
+      kind: network
+      host: "EXAMPLE.COM."
+      port: 443
