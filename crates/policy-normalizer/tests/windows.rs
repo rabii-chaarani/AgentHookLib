@@ -216,9 +216,8 @@ fn create_junction(link: &Path, target: &Path) {
     let fixture_path = |path: &Path| {
         let text = path.to_str().expect("fixture path must be Unicode");
         assert!(
-            text.chars()
-                .all(|c| c.is_ascii_alphanumeric()
-                    || matches!(c, ' ' | '\\' | ':' | '.' | '-' | '_' | '~')),
+            text.chars().all(|c| c.is_ascii_alphanumeric()
+                || matches!(c, ' ' | '\\' | ':' | '.' | '-' | '_' | '~')),
             "unexpected shell character in generated fixture path: {text:?}"
         );
         text.to_owned()
