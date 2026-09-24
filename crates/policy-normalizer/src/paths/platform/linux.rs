@@ -19,11 +19,27 @@ const TMPFS_MAGIC: u64 = 0x0102_1994;
 // and ext4 share the same statfs magic, so read the per-directory flag for the
 // whole ext family and treat the bit as authoritative when it is present.
 const EXT4_CASEFOLD_FL: u32 = 0x4000_0000;
+const XFS_DIRV2CI: u32 = 1 << 12;
+
+// XFS_IOC_FSGEOMETRY's stable 256-byte UAPI record. Only version and flags
+// are interpreted; the remaining geometry fields are opaque to this module.
+// https://github.com/torvalds/linux/blob/v6.6/fs/xfs/libxfs/xfs_fs.h
+#[repr(C, align(8))]
+struct XfsGeometry {
+    prefix: [u8; 88],
+    version: i32,
+    flags: u32,
+    suffix: [u8; 160],
+}
 
 pub(in crate::paths) fn naming(dir: &Path) -> Result<NamingSemantics, NormalizationError> {
     let directory = open_directory(dir)?;
     let fs_type = filesystem_type(directory.as_raw_fd())?;
-    semantics_for_magic(fs_type, || ext4_directory_flags(directory.as_raw_fd()))
+    semantics_for_magic(
+        fs_type,
+        || ext4_directory_flags(directory.as_raw_fd()),
+        || xfs_directory_geometry(directory.as_raw_fd()),
+    )
 }
 
 fn open_directory(dir: &Path) -> Result<File, NormalizationError> {
@@ -73,9 +89,32 @@ fn ext4_directory_flags(fd: RawFd) -> Result<u32, NormalizationError> {
     Ok(flags)
 }
 
-fn semantics_for_magic<F>(fs_type: u64, ext_flags: F) -> Result<NamingSemantics, NormalizationError>
+#[allow(unsafe_code)]
+fn xfs_directory_geometry(fd: RawFd) -> Result<(i32, u32), NormalizationError> {
+    let mut geometry = XfsGeometry {
+        prefix: [0; 88],
+        version: 0,
+        flags: 0,
+        suffix: [0; 160],
+    };
+    let request = libc::_IOR::<XfsGeometry>(u32::from(b'X'), 126);
+    // SAFETY: the caller holds fd open, and geometry provides the complete,
+    // aligned 256-byte output buffer required by XFS_IOC_FSGEOMETRY. All fields
+    // accept arbitrary bit patterns. The ioctl only reads filesystem metadata.
+    if unsafe { libc::ioctl(fd, request, &mut geometry) } < 0 {
+        return Err(NormalizationError::UnsupportedNamingSemantics);
+    }
+    Ok((geometry.version, geometry.flags))
+}
+
+fn semantics_for_magic<F, G>(
+    fs_type: u64,
+    ext_flags: F,
+    xfs_geometry: G,
+) -> Result<NamingSemantics, NormalizationError>
 where
     F: FnOnce() -> Result<u32, NormalizationError>,
+    G: FnOnce() -> Result<(i32, u32), NormalizationError>,
 {
     match fs_type {
         EXT_SUPER_MAGIC => ext_flags().map(|flags| {
@@ -85,7 +124,18 @@ where
                 NamingSemantics::Exact
             }
         }),
-        XFS_SUPER_MAGIC | BTRFS_SUPER_MAGIC | TMPFS_MAGIC => Ok(NamingSemantics::Exact),
+        XFS_SUPER_MAGIC => {
+            let (version, flags) = xfs_geometry()?;
+            if version != 5 {
+                return Err(NormalizationError::UnsupportedNamingSemantics);
+            }
+            Ok(if flags & XFS_DIRV2CI != 0 {
+                NamingSemantics::AsciiInsensitive
+            } else {
+                NamingSemantics::Exact
+            })
+        }
+        BTRFS_SUPER_MAGIC | TMPFS_MAGIC => Ok(NamingSemantics::Exact),
         _ => Err(NormalizationError::UnsupportedNamingSemantics),
     }
 }
@@ -98,23 +148,27 @@ mod tests {
 
     use super::*;
 
+    fn no_xfs_query() -> Result<(i32, u32), NormalizationError> {
+        panic!("unexpected XFS geometry query")
+    }
+
     #[test]
     fn ext_casefold_flag_controls_ascii_case_semantics() {
         assert_eq!(
-            semantics_for_magic(EXT_SUPER_MAGIC, || Ok(EXT4_CASEFOLD_FL)),
+            semantics_for_magic(EXT_SUPER_MAGIC, || Ok(EXT4_CASEFOLD_FL), no_xfs_query),
             Ok(NamingSemantics::AsciiInsensitive),
         );
         assert_eq!(
-            semantics_for_magic(EXT_SUPER_MAGIC, || Ok(0)),
+            semantics_for_magic(EXT_SUPER_MAGIC, || Ok(0), no_xfs_query),
             Ok(NamingSemantics::Exact),
         );
     }
 
     #[test]
     fn supported_non_ext_filesystems_are_exact_without_an_ioctl() {
-        for fs_type in [XFS_SUPER_MAGIC, BTRFS_SUPER_MAGIC, TMPFS_MAGIC] {
+        for fs_type in [BTRFS_SUPER_MAGIC, TMPFS_MAGIC] {
             assert_eq!(
-                semantics_for_magic(fs_type, || panic!("unexpected ext ioctl")),
+                semantics_for_magic(fs_type, || panic!("unexpected ext ioctl"), no_xfs_query),
                 Ok(NamingSemantics::Exact),
             );
         }
@@ -125,9 +179,11 @@ mod tests {
         let btrfs_magic = BTRFS_SUPER_MAGIC as u32 as i32 as i64 as u64;
         assert_eq!(filesystem_magic(btrfs_magic), BTRFS_SUPER_MAGIC,);
         assert_eq!(
-            semantics_for_magic(filesystem_magic(btrfs_magic), || panic!(
-                "unexpected ext ioctl"
-            )),
+            semantics_for_magic(
+                filesystem_magic(btrfs_magic),
+                || panic!("unexpected ext ioctl"),
+                no_xfs_query
+            ),
             Ok(NamingSemantics::Exact),
         );
     }
@@ -137,10 +193,14 @@ mod tests {
         let ioctl_called = Cell::new(false);
         for fs_type in [0, 0x794c_7630, 0x6573_5546, 0x6969] {
             assert_eq!(
-                semantics_for_magic(fs_type, || {
-                    ioctl_called.set(true);
-                    Ok(0)
-                }),
+                semantics_for_magic(
+                    fs_type,
+                    || {
+                        ioctl_called.set(true);
+                        Ok(0)
+                    },
+                    no_xfs_query
+                ),
                 Err(NormalizationError::UnsupportedNamingSemantics),
             );
         }
@@ -150,8 +210,86 @@ mod tests {
     #[test]
     fn ext_flag_read_errors_are_preserved() {
         assert_eq!(
-            semantics_for_magic(EXT_SUPER_MAGIC, || Err(NormalizationError::Inaccessible)),
+            semantics_for_magic(
+                EXT_SUPER_MAGIC,
+                || Err(NormalizationError::Inaccessible),
+                no_xfs_query
+            ),
             Err(NormalizationError::Inaccessible),
+        );
+    }
+
+    #[test]
+    fn xfs_case_mode_controls_alias_keys_and_stored_spelling() {
+        use std::ffi::OsStr;
+        let classify = |flags| {
+            semantics_for_magic(
+                XFS_SUPER_MAGIC,
+                || panic!("XFS must not use ext flags"),
+                || Ok((5, flags)),
+            )
+            .unwrap()
+        };
+        let insensitive = classify(XFS_DIRV2CI | (1 << 15));
+        assert_eq!(insensitive, NamingSemantics::AsciiInsensitive);
+        assert_eq!(
+            insensitive.name_key(OsStr::new("FILE")).unwrap(),
+            insensitive.name_key(OsStr::new("file")).unwrap()
+        );
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("StoredName"), b"unchanged").unwrap();
+        assert_eq!(
+            super::super::stored_name(dir.path(), OsStr::new("STOREDNAME"), insensitive).unwrap(),
+            "StoredName"
+        );
+        let exact = classify(1 << 15);
+        assert_eq!(exact, NamingSemantics::Exact);
+        assert_ne!(
+            exact.name_key(OsStr::new("FILE")).unwrap(),
+            exact.name_key(OsStr::new("file")).unwrap()
+        );
+    }
+
+    #[test]
+    fn xfs_requires_successful_known_geometry_before_assigning_semantics() {
+        for error in [
+            NormalizationError::UnsupportedNamingSemantics,
+            NormalizationError::Inaccessible,
+        ] {
+            assert_eq!(
+                semantics_for_magic(
+                    XFS_SUPER_MAGIC,
+                    || panic!("unexpected ext ioctl"),
+                    || Err(error)
+                ),
+                Err(error)
+            );
+        }
+        for version in [0, 4, 6] {
+            assert_eq!(
+                semantics_for_magic(
+                    XFS_SUPER_MAGIC,
+                    || panic!("unexpected ext ioctl"),
+                    || Ok((version, 0))
+                ),
+                Err(NormalizationError::UnsupportedNamingSemantics)
+            );
+        }
+    }
+
+    #[test]
+    fn xfs_geometry_matches_the_kernel_uapi_layout() {
+        assert_eq!(std::mem::size_of::<XfsGeometry>(), 256);
+        assert_eq!(std::mem::offset_of!(XfsGeometry, version), 88);
+        assert_eq!(std::mem::offset_of!(XfsGeometry, flags), 92);
+    }
+
+    #[test]
+    fn unsupported_xfs_ioctl_does_not_report_exact_semantics() {
+        let file = File::open("/dev/null").unwrap();
+        assert_eq!(
+            xfs_directory_geometry(file.as_raw_fd()),
+            Err(NormalizationError::UnsupportedNamingSemantics)
         );
     }
 

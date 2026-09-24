@@ -2,8 +2,8 @@
 description: Canonical file identities, naming semantics, and normalization boundaries for change 04.
 tags:
 - architecture
-- paths
 - normalization
+- paths
 - public-contract
 title: File identity normalization
 type: concept
@@ -24,7 +24,7 @@ The Path normalizer component in Scryer (`node-kff7hb`, change `chg-bb1frj`) own
 
 Canonical spelling and equality are separate. Comparison keys use verified per-parent filesystem naming rules, never string-prefix containment, lossy decoding, operating-system defaults, or generic Unicode lowercasing. The same fallible `NamingSemantics::name_key` operation is available to downstream selector-literal comparison. Matching and glob expansion remain later responsibilities.
 
-Platform backends query local APFS/HFS+ metadata on macOS, filesystem type and ext directory flags on Linux, and NTFS volume/directory metadata on Windows. Exact modes preserve native code units. Modes whose Unicode equivalence is not established accept ASCII only and otherwise fail closed. Unknown or remote naming rules are not guessed. Unsafe native calls are isolated in audited platform wrappers; shared logic remains safe Rust.
+Platform backends query local APFS/HFS+ metadata on macOS, filesystem type, ext directory flags, and XFS filesystem geometry on Linux, and NTFS volume/directory metadata on Windows. Exact modes preserve native code units. Modes whose Unicode equivalence is not established accept ASCII only and otherwise fail closed. XFS requires a successful version-5 `XFS_IOC_FSGEOMETRY` response: `DIRV2CI` selects ASCII-insensitive naming, and its absence selects exact naming. Unsupported queries or unknown geometry versions fail closed; filesystem type alone never establishes XFS case sensitivity. Unknown or remote naming rules are not guessed. Unsafe native calls are isolated in audited platform wrappers; shared logic remains safe Rust.
 
 ## Operational boundary
 

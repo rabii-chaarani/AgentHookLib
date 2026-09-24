@@ -49,7 +49,9 @@ names remain distinct because policies describe paths, not inodes.
 
 Naming rules come from actual parent-directory metadata on macOS, Linux, and
 Windows. Supported local modes are APFS/HFS+, ext2/3/4, XFS, Btrfs, tmpfs, and
-NTFS. Unknown or remote filesystem semantics fail closed. Native exact modes
+NTFS. XFS uses the filesystem geometry's ASCII-CI flag; unavailable or
+unknown-version geometry returns an error. Unknown or remote filesystem
+semantics fail closed. Native exact modes
 preserve code units, including non-UTF-8 Unix names. Modes whose Unicode
 equivalence is not implemented accept ASCII names only; unsupported names return
 `UnsupportedNamingSemantics`. No lossy decoding or general Unicode lowercasing

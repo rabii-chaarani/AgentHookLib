@@ -3,3 +3,9 @@ retries = 0
 
 [profile.ci.junit]
 path = "junit.xml"
+
+[profile.xfs]
+retries = 0
+
+[profile.xfs.junit]
+path = "junit.xml"
