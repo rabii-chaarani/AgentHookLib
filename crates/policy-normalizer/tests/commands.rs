@@ -131,18 +131,134 @@ fn recognizes_only_exact_supported_git_executables_and_subcommands() {
 }
 
 #[test]
-fn rejects_force_push_and_hard_reset_until_change_six() {
+fn classifies_force_push_forms_in_any_option_position() {
     for source in [
         "git push --force origin main",
         "git push origin main -f",
+        "git push -vf origin main",
+        "git push origin -fv main",
+        "git push -fo tracking origin main",
+        "git push --force-with-lease origin main",
+        "git push origin main --force-with-lease=refs/heads/main:abc123",
+        "git push --force-w=refs/heads/main:abc123 origin main",
+        "git push --force-with origin main",
         "git push origin +HEAD:main",
+        "git push --repo=origin +HEAD:main",
+        "git push --repo origin +HEAD:main",
+        "git push origin -- +HEAD:main",
+    ] {
+        assert_eq!(
+            parse(source).operations()[0].action(),
+            Action::Git(GitAction::ForcePush),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn classifies_hard_reset_and_preserves_operation_context() {
+    let supplied_context = context();
+    let parsed = parse_command_line(
+        "echo before && command git reset --har HEAD | git push origin -f; echo after",
+        &supplied_context,
+    )
+    .unwrap();
+    assert_eq!(parsed.context(), &supplied_context);
+    assert_eq!(parsed.operations().len(), 4);
+    assert_eq!(
+        parsed
+            .operations()
+            .iter()
+            .map(|op| op.action())
+            .collect::<Vec<_>>(),
+        vec![
+            Action::Command(CommandAction::Execute),
+            Action::Git(GitAction::ResetHard),
+            Action::Git(GitAction::ForcePush),
+            Action::Command(CommandAction::Execute),
+        ]
+    );
+    assert_eq!(parsed.operations()[1].invocation().executable(), "command");
+    assert_eq!(
+        parsed.operations()[1].invocation().arguments(),
+        args(&["git", "reset", "--har", "HEAD"])
+    );
+    assert_eq!(
+        parsed.operations()[2].invocation().arguments(),
+        args(&["push", "origin", "-f"])
+    );
+    for source in [
         "git reset --hard HEAD",
+        "git reset HEAD --hard",
         "git reset --har HEAD",
+    ] {
+        assert_eq!(
+            parse(source).operations()[0].action(),
+            Action::Git(GitAction::ResetHard),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn negations_and_option_boundaries_do_not_invent_force() {
+    let plain_push = [
+        "git push --force --no-force origin main",
+        "git push --force-with-lease --no-force-with-lease origin main",
+        "git push --force-if-includes origin main",
+        "git push --force-if origin main",
+        "git push --no-force-if-includes origin main",
+        "git push --repo=--force origin main",
+        "git push --repo --force main",
+        "git push -o --force origin main",
+        "git push -o--force origin main",
+        "git push -of origin main",
+        "git push --push-option=--force origin main",
+        "git push origin -- --force",
+        "git push +origin main",
+    ];
+    for source in plain_push {
+        assert_eq!(
+            parse(source).operations()[0].action(),
+            Action::Git(GitAction::Push),
+            "{source}"
+        );
+    }
+    for source in [
+        "git push --no-force --force origin main",
+        "git push --no-force-with-lease --force-with-lease origin main",
+        "git push --force --no-force origin +main",
+    ] {
+        assert_eq!(
+            parse(source).operations()[0].action(),
+            Action::Git(GitAction::ForcePush),
+            "{source}"
+        );
+    }
+    assert_eq!(
+        parse("git reset HEAD -- --hard").operations()[0].action(),
+        Action::Git(GitAction::Reset)
+    );
+}
+
+#[test]
+fn ambiguous_or_malformed_git_options_fail_without_partial_operations() {
+    for source in [
+        "git push --forc origin main",
+        "git push --force-with-lease= origin main",
+        "git push --force-extra origin main",
+        "git push --repo",
+        "git push -o",
+        "git push --unknown origin main",
+        "git reset --ha HEAD",
+        "git reset --harder HEAD",
+        "git reset --hard=HEAD",
     ] {
         let error = parse_command_line(source, &context()).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::UnsupportedOperation, "{source}");
-        assert!(error.offset() < source.len());
+        assert!(error.offset() < source.len(), "{source}");
     }
+    assert!(parse_command_line("echo safe; git push --forc origin main", &context()).is_err());
 }
 
 #[test]
@@ -189,7 +305,7 @@ fn rejects_unsupported_syntax_and_returns_no_partial_operations() {
         assert!(error.offset() <= source.len(), "{source}");
     }
 
-    assert!(parse_command_line("tool; git push -f", &context()).is_err());
+    assert!(parse_command_line("tool; git push --forc", &context()).is_err());
 }
 
 #[test]
