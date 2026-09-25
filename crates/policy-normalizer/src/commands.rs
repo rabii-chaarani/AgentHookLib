@@ -608,33 +608,8 @@ fn classify(tokens: &[Token], executable_index: usize) -> Result<Action, Command
     let action = match subcommand.value.as_str() {
         "commit" => GitAction::Commit,
         "checkout" => GitAction::Checkout,
-        "reset" => {
-            if let Some(flag) = args
-                .iter()
-                .find(|argument| is_hard_reset_option(&argument.value))
-            {
-                return Err(CommandParseError::new(
-                    CommandParseErrorKind::UnsupportedOperation,
-                    flag.start,
-                ));
-            }
-            GitAction::Reset
-        }
-        "push" => {
-            if let Some(flag) = args.iter().find(|argument| {
-                argument.value.starts_with("--force")
-                    || argument.value.starts_with('+')
-                    || (argument.value.starts_with('-')
-                        && !argument.value.starts_with("--")
-                        && argument.value[1..].contains('f'))
-            }) {
-                return Err(CommandParseError::new(
-                    CommandParseErrorKind::UnsupportedOperation,
-                    flag.start,
-                ));
-            }
-            GitAction::Push
-        }
+        "reset" => classify_reset(args)?,
+        "push" => classify_push(args)?,
         _ => return Ok(Action::Command(CommandAction::Execute)),
     };
     Ok(Action::Git(action))
@@ -668,11 +643,124 @@ fn windows_executable_stem(actual: &str) -> &str {
         .unwrap_or(actual)
 }
 
-fn is_hard_reset_option(argument: &str) -> bool {
-    let option = argument
-        .split_once('=')
-        .map_or(argument, |(option, _)| option);
-    option == "--hard" || (option.len() > 2 && "--hard".starts_with(option))
+fn unsupported_option(token: &Token) -> CommandParseError {
+    CommandParseError::new(CommandParseErrorKind::UnsupportedOperation, token.start)
+}
+
+fn matches_long_option(option: &str, full: &str, shortest: &str) -> bool {
+    option.len() >= shortest.len() && full.starts_with(option)
+}
+
+fn classify_reset(args: &[Token]) -> Result<GitAction, CommandParseError> {
+    let mut options = true;
+    let mut hard = false;
+    for token in args {
+        let value = token.value.as_str();
+        if options && value == "--" {
+            options = false;
+        } else if options && value.starts_with('-') {
+            if matches!(value, "--hard" | "--har") {
+                hard = true;
+            } else if !matches!(
+                value,
+                "--soft" | "--mixed" | "--merge" | "--keep" | "--patch" | "-p" | "-q" | "-N"
+            ) {
+                return Err(unsupported_option(token));
+            }
+        }
+    }
+    Ok(if hard {
+        GitAction::ResetHard
+    } else {
+        GitAction::Reset
+    })
+}
+
+fn classify_push(args: &[Token]) -> Result<GitAction, CommandParseError> {
+    let mut options = true;
+    let mut force = false;
+    let mut lease = false;
+    let mut forced_refspec = false;
+    let mut remote_supplied = false;
+    let mut next_is_value = false;
+
+    for token in args {
+        let value = token.value.as_str();
+        if next_is_value {
+            next_is_value = false;
+            continue;
+        }
+        if options && value == "--" {
+            options = false;
+            continue;
+        }
+        if options && value.starts_with("--") {
+            let (option, attached_value) = value
+                .split_once('=')
+                .map_or((value, None), |(name, value)| (name, Some(value)));
+            match option {
+                "--force" if attached_value.is_none() => force = true,
+                "--no-force" if attached_value.is_none() => force = false,
+                name if matches_long_option(name, "--force-with-lease", "--force-w")
+                    && attached_value.is_none_or(|v| !v.is_empty()) =>
+                {
+                    lease = true;
+                }
+                name if matches_long_option(name, "--no-force-with-lease", "--no-force-w")
+                    && attached_value.is_none() =>
+                {
+                    lease = false;
+                }
+                name if (matches_long_option(name, "--force-if-includes", "--force-i")
+                    || matches_long_option(name, "--no-force-if-includes", "--no-force-i"))
+                    && attached_value.is_none() => {}
+                "--repo" | "--receive-pack" | "--exec" | "--push-option" => {
+                    if option == "--repo" {
+                        remote_supplied = true;
+                    }
+                    next_is_value = attached_value.is_none();
+                }
+                "--all" | "--mirror" | "--tags" | "--delete" | "--dry-run" | "--porcelain"
+                | "--quiet" | "--verbose" | "--prune" | "--follow-tags" | "--set-upstream"
+                | "--no-verify" | "--atomic" | "--progress" | "--ipv4" | "--ipv6" | "--thin"
+                | "--no-thin"
+                    if attached_value.is_none() => {}
+                _ => return Err(unsupported_option(token)),
+            }
+            continue;
+        }
+        if options && value.starts_with('-') && value.len() > 1 {
+            let short_options = &value[1..];
+            for (index, option) in short_options.char_indices() {
+                match option {
+                    'f' => force = true,
+                    'q' | 'v' | 'n' | 'u' | 'd' => {}
+                    'o' => {
+                        next_is_value = index + option.len_utf8() == short_options.len();
+                        break;
+                    }
+                    _ => return Err(unsupported_option(token)),
+                }
+            }
+            continue;
+        }
+        if !remote_supplied {
+            remote_supplied = true;
+        } else if value.starts_with('+') && value.len() > 1 {
+            forced_refspec = true;
+        }
+    }
+    if next_is_value {
+        return Err(args.last().map_or(
+            CommandParseError::new(CommandParseErrorKind::UnsupportedOperation, 0),
+            unsupported_option,
+        ));
+    }
+    Ok(if force || lease || forced_refspec {
+        GitAction::ForcePush
+    } else {
+        GitAction::Push
+    })
 }
 
 fn is_shell_interpreter(name: &str) -> bool {

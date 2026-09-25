@@ -80,8 +80,13 @@ built-ins such as `cd`, `export`, and `source` are unsupported, since they can
 change how later operations in a compound run.
 Exact `git commit`, `git checkout`, `git reset`, and `git push` subcommands map
 to their semantic Git actions. Other valid commands remain generic command
-operations. Force-push and hard-reset forms return an unsupported-operation
-error until their dedicated classifications are implemented.
+operations. `git push --force`, `-f` (including short-option groups),
+`--force-with-lease`, and a leading `+` on a refspec classify as force pushes;
+`git reset --hard` classifies as a hard reset. Supported unambiguous option
+abbreviations include `--force-w` and `--har`. Negations are applied in argument
+order. Option values and arguments following `--` are not interpreted as flags;
+`+` refspecs remain force pushes after `--`. Unknown or ambiguous Git options
+return an unsupported-operation error rather than a weaker classification.
 
 Variable, command, arithmetic, and process substitutions; unquoted globbing;
 redirection; background execution; shell control structures; and malformed
